@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebMania - osu!mania Clone</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #111;
+            overflow: hidden;
+            font-family: 'Arial', sans-serif;
+            color: white;
+        }
+        #game-container {
+            position: relative;
+            width: 800px;
+            height: 600px;
+            margin: 20px auto;
+            background: #222;
+        }
+        #game-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        #file-input {
+            display: none;
+        }
+        #controls {
+            text-align: center;
+            margin: 10px;
+        }
+        button {
+            background: #6e48aa;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            margin: 0 5px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 24px;
+            text-align: center;
+        }
+        #judgement {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 32px;
+            color: #ffcc00;
+            text-shadow: 0 0 5px black;
+            opacity: 0;
+        }
+        #settings {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 5px;
+            display: none;
+            z-index: 10;
+        }
+        #difficulty-select {
+            margin: 10px 0;
+        }
+        select, input {
+            background: #333;
+            color: white;
+            border: 1px solid #555;
+            padding: 5px;
+            margin: 5px 0;
+        }
+        .settings-row {
+            margin: 5px 0;
+        }
+        label {
+            display: inline-block;
+            width: 120px;
+        }
+        #pause-menu {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.8);
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            display: none;
+            z-index: 10;
+        }
+        #pause-menu h2 {
+            margin-top: 0;
+        }
+        #judgement-stats {
+            position: absolute;
+            top: 100px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 16px;
+            text-align: right;
+        }
+        .judgement-stat {
+            margin: 5px 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <button id="load-btn">Load .osz File</button>
+        <button id="start-btn">Start Game</button>
+        <button id="restart-btn">Restart</button>
+        <button id="pause-btn">Pause</button>
+        <button id="settings-btn">Settings</button>
+        <input type="file" id="file-input" accept=".osz">
+    </div>
+    <div id="game-container">
+        <canvas id="game-canvas" width="800" height="600"></canvas>
+        <div id="loading">Load an .osz file to begin</div>
+        <div id="judgement"></div>
+        <div id="judgement-stats">
+            <div class="judgement-stat" id="perfect-count">PERFECT: 0</div>
+            <div class="judgement-stat" id="great-count">GREAT: 0</div>
+            <div class="judgement-stat" id="good-count">GOOD: 0</div>
+            <div class="judgement-stat" id="bad-count">BAD: 0</div>
+            <div class="judgement-stat" id="miss-count">MISS: 0</div>
+        </div>
+
+        <div id="settings">
+            <div class="settings-row">
+                <label for="difficulty-select">Difficulty:</label>
+                <select id="difficulty-select"></select>
+            </div>
+            <div class="settings-row">
+                <label for="scroll-speed">Scroll Speed:</label>
+                <input type="range" id="scroll-speed" min="1" max="30" step="0.1" value="10">
+                <span id="speed-value">10</span>
+            </div>
+            <div class="settings-row">
+                <label for="key-binds">Key Binds (4K):</label>
+                <input type="text" id="key1" value="d" maxlength="1" size="1">
+                <input type="text" id="key2" value="f" maxlength="1" size="1">
+                <input type="text" id="key3" value="j" maxlength="1" size="1">
+                <input type="text" id="key4" value="k" maxlength="1" size="1">
+            </div>
+            <div class="settings-row">
+                <label for="scroll-direction">Scroll Direction:</label>
+                <select id="scroll-direction">
+                    <option value="down">Down</option>
+                    <option value="up">Up</option>
+                </select>
+            </div>
+            <button id="apply-settings">Apply</button>
+        </div>
+
+        <div id="pause-menu">
+            <h2>Game Paused</h2>
+            <p>Score: <span id="pause-score">0</span></p>
+            <p>Combo: <span id="pause-combo">0</span></p>
+            <button id="resume-btn">Resume</button>
+            <button id="restart-from-pause">Restart</button>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
+    <script>
+        // Game constants
+        const COLUMNS = 4;
+        const NOTE_WIDTH = 100;
+        const NOTE_RADIUS = 40;
+        const RECEPTOR_RADIUS = 35;
+        const JUDGEMENT_WINDOWS = {
+            perfect: 50,
+            great: 100,
+            good: 150,
+            bad: 200
+        };
+        const JUDGEMENT_SCORES = {
+            perfect: 300,
+            great: 200,
+            good: 100,
+            bad: 50,
+            miss: 0
+        };
+        const COLORS = ['#ff5555', '#55ff55', '#5555ff', '#ffff55'];
+        const RECEPTOR_COLORS = ['#ff9999', '#99ff99', '#9999ff', '#ffff99'];
+
+        // Game state
+        let gameState = {
+            loaded: false,
+            playing: false,
+            paused: false,
+            audioContext: null,
+            audioBuffer: null,
+            startTime: 0,
+            pauseTime: 0,
+            notes: [],
+            score: 0,
+            combo: 0,
+            maxCombo: 0,
+            keyStates: new Array(COLUMNS).fill(false),
+            hitObjects: [],
+            hitPosition: 500, // Will be set based on scroll direction
+            lastJudgement: null,
+            judgementTime: 0,
+            beatmaps: [],
+            currentBeatmap: null,
+            scrollSpeed: 10,
+            keyBinds: ['d', 'f', 'j', 'k'],
+            audioSource: null,
+            scrollDirection: 'down',
+            missedNotes: 0,
+            spawnPosition: 100, // Will be set based on scroll direction
+            trackLength: 0, // Total length of the track in pixels
+            laneOffset: 200, // Added to center the lanes
+            judgementCounts: {
+                perfect: 0,
+                great: 0,
+                good: 0,
+                bad: 0,
+                miss: 0
+            }
+        };
+
+        // DOM elements
+        const canvas = document.getElementById('game-canvas');
+        const ctx = canvas.getContext('2d');
+        const loadBtn = document.getElementById('load-btn');
+        const startBtn = document.getElementById('start-btn');
+        const restartBtn = document.getElementById('restart-btn');
+        const pauseBtn = document.getElementById('pause-btn');
+        const fileInput = document.getElementById('file-input');
+        const loadingText = document.getElementById('loading');
+        const judgementDisplay = document.getElementById('judgement');
+        const settingsBtn = document.getElementById('settings-btn');
+        const settingsPanel = document.getElementById('settings');
+        const difficultySelect = document.getElementById('difficulty-select');
+        const scrollSpeedInput = document.getElementById('scroll-speed');
+        const speedValue = document.getElementById('speed-value');
+        const applySettingsBtn = document.getElementById('apply-settings');
+        const pauseMenu = document.getElementById('pause-menu');
+        const resumeBtn = document.getElementById('resume-btn');
+        const restartFromPauseBtn = document.getElementById('restart-from-pause');
+        const pauseScore = document.getElementById('pause-score');
+        const pauseCombo = document.getElementById('pause-combo');
+        const scrollDirectionSelect = document.getElementById('scroll-direction');
+        const perfectCount = document.getElementById('perfect-count');
+        const greatCount = document.getElementById('great-count');
+        const goodCount = document.getElementById('good-count');
+        const badCount = document.getElementById('bad-count');
+        const missCount = document.getElementById('miss-count');
+
+        // Initialize game
+        function init() {
+            loadBtn.addEventListener('click', () => fileInput.click());
+            startBtn.addEventListener('click', startGame);
+            restartBtn.addEventListener('click', restartGame);
+            pauseBtn.addEventListener('click', togglePause);
+            fileInput.addEventListener('change', handleFileSelect);
+            settingsBtn.addEventListener('click', toggleSettings);
+            applySettingsBtn.addEventListener('click', applySettings);
+            scrollSpeedInput.addEventListener('input', updateSpeedValue);
+            resumeBtn.addEventListener('click', togglePause);
+            restartFromPauseBtn.addEventListener('click', restartGame);
+
+            document.addEventListener('keydown', handleKeyDown);
+            document.addEventListener('keyup', handleKeyUp);
+
+            startBtn.disabled = true;
+            restartBtn.disabled = true;
+            pauseBtn.disabled = true;
+            settingsBtn.disabled = true;
+
+            // Set initial positions based on scroll direction
+            updateScrollDirection();
+
+            // Initial render
+            render();
+        }
+
+        // Update scroll direction positions
+        function updateScrollDirection() {
+            if (gameState.scrollDirection === 'down') {
+                gameState.hitPosition = canvas.height - 100; // Receptors at bottom
+                gameState.spawnPosition = -50; // Notes spawn above top
+                gameState.trackLength = canvas.height + 100; // Total distance from spawn to hit position
+            } else {
+                gameState.hitPosition = 100; // Receptors at top
+                gameState.spawnPosition = canvas.height + 50; // Notes spawn below bottom
+                gameState.trackLength = canvas.height + 100; // Total distance from spawn to hit position
+            }
+        }
+
+        // Update speed display
+        function updateSpeedValue() {
+            speedValue.textContent = scrollSpeedInput.value;
+        }
+
+        // Update judgement counts display
+        function updateJudgementCounts() {
+            perfectCount.textContent = `PERFECT: ${gameState.judgementCounts.perfect}`;
+            greatCount.textContent = `GREAT: ${gameState.judgementCounts.great}`;
+            goodCount.textContent = `GOOD: ${gameState.judgementCounts.good}`;
+            badCount.textContent = `BAD: ${gameState.judgementCounts.bad}`;
+            missCount.textContent = `MISS: ${gameState.judgementCounts.miss}`;
+        }
+
+        // Toggle settings panel
+        function toggleSettings() {
+            settingsPanel.style.display = settingsPanel.style.display === 'block' ? 'none' : 'block';
+        }
+
+        // Apply settings
+        function applySettings() {
+            gameState.scrollSpeed = parseFloat(scrollSpeedInput.value);
+            gameState.keyBinds = [
+                document.getElementById('key1').value.toLowerCase(),
+                document.getElementById('key2').value.toLowerCase(),
+                document.getElementById('key3').value.toLowerCase(),
+                document.getElementById('key4').value.toLowerCase()
+            ];
+            gameState.scrollDirection = scrollDirectionSelect.value;
+
+            // Update positions based on scroll direction
+            updateScrollDirection();
+
+            if (gameState.currentBeatmap !== null) {
+                const selectedIndex = difficultySelect.selectedIndex;
+                if (selectedIndex >= 0) {
+                    gameState.currentBeatmap = gameState.beatmaps[selectedIndex];
+                    parseBeatmap(gameState.currentBeatmap.content);
+                }
+            }
+
+            settingsPanel.style.display = 'none';
+        }
+
+        // Toggle pause
+        function togglePause() {
+            if (!gameState.playing) return;
+
+            if (gameState.paused) {
+                // Resume game
+                const pauseDuration = gameState.audioContext.currentTime - gameState.pauseTime;
+                gameState.startTime += pauseDuration;
+                gameState.audioSource.start(0, gameState.audioContext.currentTime - gameState.startTime);
+                gameState.paused = false;
+                pauseMenu.style.display = 'none';
+            } else {
+                // Pause game
+                gameState.pauseTime = gameState.audioContext.currentTime;
+                gameState.audioSource.stop();
+                gameState.paused = true;
+                pauseScore.textContent = Math.floor(gameState.score);
+                pauseCombo.textContent = gameState.combo;
+                pauseMenu.style.display = 'block';
+            }
+        }
+
+        // Restart game
+        function restartGame() {
+            if (!gameState.loaded) return;
+
+            if (gameState.audioSource) {
+                gameState.audioSource.stop();
+            }
+
+            gameState.paused = false;
+            pauseMenu.style.display = 'none';
+            startGame();
+        }
+
+        // Handle file selection
+        async function handleFileSelect(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            loadingText.textContent = "Loading...";
+            gameState.beatmaps = [];
+            difficultySelect.innerHTML = '';
+
+            try {
+                const zip = await JSZip.loadAsync(file);
+                const beatmapFiles = [];
+
+                // Find all .osu files in the zip
+                zip.forEach((relativePath, zipEntry) => {
+                    if (relativePath.endsWith('.osu')) {
+                        beatmapFiles.push(zipEntry);
+                    }
+                });
+
+                if (beatmapFiles.length === 0) {
+                    throw new Error("No .osu files found in the .osz");
+                }
+
+                // Load all beatmaps
+                for (const beatmapFile of beatmapFiles) {
+                    const beatmapContent = await beatmapFile.async('text');
+                    const versionMatch = beatmapContent.match(/Version:(.+)/);
+                    const version = versionMatch ? versionMatch[1].trim() : 'Unknown';
+
+                    gameState.beatmaps.push({
+                        name: version,
+                        content: beatmapContent,
+                        file: beatmapFile
+                    });
+
+                    // Add to difficulty select
+                    const option = document.createElement('option');
+                    option.textContent = version;
+                    difficultySelect.appendChild(option);
+                }
+
+                // Find and load audio file (use audio from first beatmap)
+                const firstBeatmapContent = gameState.beatmaps[0].content;
+                const audioFileName = firstBeatmapContent.match(/AudioFilename:\s*(.+)/)[1].trim();
+                const audioFile = zip.file(audioFileName);
+
+                if (!audioFile) {
+                    throw new Error("Audio file not found in .osz");
+                }
+
+                const audioArrayBuffer = await audioFile.async('arraybuffer');
+                await loadAudio(audioArrayBuffer);
+
+                // Select first difficulty by default
+                gameState.currentBeatmap = gameState.beatmaps[0];
+                parseBeatmap(gameState.currentBeatmap.content);
+
+                loadingText.textContent = "Ready! Click Start Game";
+                gameState.loaded = true;
+                startBtn.disabled = false;
+                restartBtn.disabled = false;
+                pauseBtn.disabled = false;
+                settingsBtn.disabled = false;
+            } catch (error) {
+                console.error(error);
+                loadingText.textContent = `Error: ${error.message}`;
+            }
+        }
+
+        // Parse .osu file
+        function parseBeatmap(content) {
+            gameState.hitObjects = [];
+            gameState.missedNotes = 0;
+            gameState.judgementCounts = {
+                perfect: 0,
+                great: 0,
+                good: 0,
+                bad: 0,
+                miss: 0
+            };
+            updateJudgementCounts();
+
+            const lines = content.split('\n');
+            let inHitObjects = false;
+
+            for (const line of lines) {
+                if (line.startsWith('[HitObjects]')) {
+                    inHitObjects = true;
+                    continue;
+                }
+
+                if (inHitObjects && line.trim()) {
+                    const parts = line.split(',');
+                    if (parts.length >= 4) {
+                        const x = parseInt(parts[0]);
+                        const time = parseInt(parts[2]);
+                        const column = Math.floor(x * COLUMNS / 512);
+
+                        if (column >= 0 && column < COLUMNS) {
+                            gameState.hitObjects.push({
+                                time,
+                                column,
+                                hit: false,
+                                missed: false
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Sort by time
+            gameState.hitObjects.sort((a, b) => a.time - b.time);
+        }
+
+        // Load audio
+        async function loadAudio(arrayBuffer) {
+            if (!gameState.audioContext) {
+                gameState.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+
+            try {
+                gameState.audioBuffer = await gameState.audioContext.decodeAudioData(arrayBuffer);
+            } catch (error) {
+                console.error("Error decoding audio:", error);
+                throw error;
+            }
+        }
+
+        // Start game
+        function startGame() {
+            if (!gameState.loaded || (gameState.playing && !gameState.paused)) return;
+
+            // Stop any existing audio
+            if (gameState.audioSource) {
+                gameState.audioSource.stop();
+            }
+
+            gameState.playing = true;
+            gameState.paused = false;
+            gameState.startTime = gameState.audioContext.currentTime;
+            gameState.score = 0;
+            gameState.combo = 0;
+            gameState.maxCombo = 0;
+            gameState.notes = [];
+            gameState.missedNotes = 0;
+            gameState.judgementCounts = {
+                perfect: 0,
+                great: 0,
+                good: 0,
+                bad: 0,
+                miss: 0
+            };
+            updateJudgementCounts();
+
+            // Reset hit objects
+            gameState.hitObjects.forEach(obj => {
+                obj.hit = false;
+                obj.missed = false;
+            });
+
+            // Play audio
+            gameState.audioSource = gameState.audioContext.createBufferSource();
+            gameState.audioSource.buffer = gameState.audioBuffer;
+            gameState.audioSource.connect(gameState.audioContext.destination);
+            gameState.audioSource.start();
+
+            loadingText.style.display = 'none';
+            pauseMenu.style.display = 'none';
+        }
+
+        // Handle key press
+        function handleKeyDown(e) {
+            if (!gameState.playing || gameState.paused) return;
+
+            // Check for pause key (Escape)
+            if (e.key === 'Escape') {
+                togglePause();
+                return;
+            }
+
+            for (let i = 0; i < gameState.keyBinds.length; i++) {
+                if (e.key.toLowerCase() === gameState.keyBinds[i]) {
+                    gameState.keyStates[i] = true;
+                    checkHits(i);
+                }
+            }
+        }
+
+        // Handle key release
+        function handleKeyUp(e) {
+            for (let i = 0; i < gameState.keyBinds.length; i++) {
+                if (e.key.toLowerCase() === gameState.keyBinds[i]) {
+                    gameState.keyStates[i] = false;
+                }
+            }
+        }
+
+        // Check for hits
+        function checkHits(column) {
+            const currentTime = (gameState.audioContext.currentTime - gameState.startTime) * 1000;
+
+            let closestHit = null;
+            let closestDiff = Infinity;
+
+            // Find the closest unhit note in this column
+            for (const obj of gameState.hitObjects) {
+                if (obj.column === column && !obj.hit && !obj.missed) {
+                    const diff = Math.abs(obj.time - currentTime);
+
+                    if (diff < closestDiff && diff <= JUDGEMENT_WINDOWS.bad) {
+                        closestDiff = diff;
+                        closestHit = obj;
+                    }
+                }
+            }
+
+            if (closestHit) {
+                closestHit.hit = true;
+                let judgement = 'bad';
+
+                if (closestDiff <= JUDGEMENT_WINDOWS.perfect) {
+                    judgement = 'perfect';
+                } else if (closestDiff <= JUDGEMENT_WINDOWS.great) {
+                    judgement = 'great';
+                } else if (closestDiff <= JUDGEMENT_WINDOWS.good) {
+                    judgement = 'good';
+                }
+
+                // Update judgement count
+                gameState.judgementCounts[judgement]++;
+                updateJudgementCounts();
+
+                gameState.combo++;
+                gameState.maxCombo = Math.max(gameState.maxCombo, gameState.combo);
+                gameState.score += JUDGEMENT_SCORES[judgement] * (1 + gameState.combo / 100);
+
+                // Show judgement
+                showJudgement(judgement);
+
+                // Create a note effect
+                gameState.notes.push({
+                    x: gameState.laneOffset + column * NOTE_WIDTH + NOTE_WIDTH / 2,
+                    y: gameState.hitPosition,
+                    alpha: 1,
+                    color: COLORS[column],
+                    radius: NOTE_RADIUS
+                });
+            }
+        }
+
+        // Check for missed notes
+        function checkMissedNotes(currentTime) {
+            for (const obj of gameState.hitObjects) {
+                if (!obj.hit && !obj.missed) {
+                    const diff = obj.time - currentTime;
+
+                    // If note has passed the hit window
+                    if (diff < -JUDGEMENT_WINDOWS.bad) {
+                        obj.missed = true;
+                        gameState.missedNotes++;
+                        gameState.combo = 0;
+
+                        // Update miss count
+                        gameState.judgementCounts.miss++;
+                        updateJudgementCounts();
+
+                        // Show miss judgement if note was close enough to be visible
+                        let noteY;
+                        const pixelsPerMillisecond = (gameState.scrollSpeed * gameState.trackLength) / 1000;
+
+                        if (gameState.scrollDirection === 'down') {
+                            noteY = gameState.hitPosition - (currentTime - obj.time) * pixelsPerMillisecond;
+                        } else {
+                            noteY = gameState.hitPosition + (currentTime - obj.time) * pixelsPerMillisecond;
+                        }
+
+                        if (noteY > -50 && noteY < canvas.height + 50) {
+                            showJudgement('miss');
+                        }
+                    }
+                }
+            }
+        }
+
+        // Show judgement text
+        function showJudgement(judgement) {
+            const texts = {
+                perfect: 'PERFECT',
+                great: 'GREAT',
+                good: 'GOOD',
+                bad: 'BAD',
+                miss: 'MISS'
+            };
+
+            judgementDisplay.textContent = texts[judgement];
+            judgementDisplay.style.color = 
+                judgement === 'perfect' ? '#ffcc00' :
+                judgement === 'great' ? '#88ff00' :
+                judgement === 'good' ? '#00aaff' : 
+                judgement === 'bad' ? '#ff5555' : '#ff0000';
+
+            judgementDisplay.style.opacity = 1;
+            gameState.judgementTime = Date.now();
+        }
+
+        // Main render function
+        function render() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (gameState.playing && !gameState.paused) {
+                const currentTime = (gameState.audioContext.currentTime - gameState.startTime) * 1000;
+
+                // Check for missed notes
+                checkMissedNotes(currentTime);
+
+                // Draw columns (centered)
+                for (let i = 0; i < COLUMNS; i++) {
+                    ctx.fillStyle = gameState.keyStates[i] ? '#444' : '#333';
+                    ctx.fillRect(gameState.laneOffset + i * NOTE_WIDTH, 0, NOTE_WIDTH, canvas.height);
+
+                    ctx.strokeStyle = '#555';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(gameState.laneOffset + i * NOTE_WIDTH, 0, NOTE_WIDTH, canvas.height);
+                }
+
+                // Draw hit receptors (circular)
+                for (let i = 0; i < COLUMNS; i++) {
+                    const x = gameState.laneOffset + i * NOTE_WIDTH + NOTE_WIDTH / 2;
+                    const y = gameState.hitPosition;
+
+                    // Outer circle
+                    ctx.fillStyle = gameState.keyStates[i] ? RECEPTOR_COLORS[i] : COLORS[i];
+                    ctx.beginPath();
+                    ctx.arc(x, y, RECEPTOR_RADIUS, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Inner circle
+                    ctx.fillStyle = gameState.keyStates[i] ? COLORS[i] : '#222';
+                    ctx.beginPath();
+                    ctx.arc(x, y, RECEPTOR_RADIUS * 0.6, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Draw notes (circular)
+                for (const obj of gameState.hitObjects) {
+                    if (!obj.hit && !obj.missed) {
+                        let y;
+                        const pixelsPerMillisecond = (gameState.scrollSpeed * gameState.trackLength) / 1000;
+                        const timeUntilHit = obj.time - currentTime;
+
+                        if (gameState.scrollDirection === 'down') {
+                            // Notes come from top (spawnPosition) to hitPosition (bottom)
+                            y = gameState.hitPosition - timeUntilHit * pixelsPerMillisecond;
+                        } else {
+                            // Notes come from bottom (spawnPosition) to hitPosition (top)
+                            y = gameState.hitPosition + timeUntilHit * pixelsPerMillisecond;
+                        }
+
+                        if (y > -50 && y < canvas.height + 50) {
+                            const x = gameState.laneOffset + obj.column * NOTE_WIDTH + NOTE_WIDTH / 2;
+
+                            // Draw note
+                            ctx.fillStyle = COLORS[obj.column];
+                            ctx.beginPath();
+                            ctx.arc(x, y, NOTE_RADIUS, 0, Math.PI * 2);
+                            ctx.fill();
+
+                            // Add inner circle for better visibility
+                            ctx.fillStyle = '#222';
+                            ctx.beginPath();
+                            ctx.arc(x, y, NOTE_RADIUS * 0.7, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                    }
+                }
+
+                // Draw note effects (hit explosions)
+                for (let i = gameState.notes.length - 1; i >= 0; i--) {
+                    const note = gameState.notes[i];
+                    ctx.globalAlpha = note.alpha;
+
+                    // Draw expanding circle
+                    ctx.strokeStyle = note.color;
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.arc(note.x, note.y, note.radius * (1 + (1 - note.alpha) * 2), 0, Math.PI * 2);
+                    ctx.stroke();
+
+                    // Draw shrinking circle
+                    ctx.fillStyle = note.color;
+                    ctx.beginPath();
+                    ctx.arc(note.x, note.y, note.radius * note.alpha, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.globalAlpha = 1;
+
+                    note.alpha -= 0.02;
+                    note.radius += 1;
+                    if (note.alpha <= 0) {
+                        gameState.notes.splice(i, 1);
+                    }
+                }
+
+                // Draw score and combo only (removed speed and direction text)
+                ctx.fillStyle = 'white';
+                ctx.font = '24px Arial';
+                ctx.textAlign = 'left';
+                ctx.fillText(`Score: ${Math.floor(gameState.score)}`, 20, 40);
+
+                ctx.font = '20px Arial';
+                ctx.fillText(`Combo: ${gameState.combo}`, 20, 70);
+
+                // Fade judgement text
+                if (judgementDisplay.style.opacity > 0 && Date.now() - gameState.judgementTime > 500) {
+                    judgementDisplay.style.opacity -= 0.02;
+                }
+            }
+
+            requestAnimationFrame(render);
+        }
+
+        // Initialize the game
+        init();
+    </script>
+</body>
+</html>
