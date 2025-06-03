@@ -205,6 +205,7 @@
             audioBuffer: null,
             startTime: 0,
             pauseTime: 0,
+            pauseOffset: 0, // Track how much time we've been paused
             notes: [],
             score: 0,
             combo: 0,
@@ -271,7 +272,7 @@
             settingsBtn.addEventListener('click', toggleSettings);
             applySettingsBtn.addEventListener('click', applySettings);
             scrollSpeedInput.addEventListener('input', updateSpeedValue);
-            resumeBtn.addEventListener('click', togglePause);
+            resumeBtn.addEventListener('click', resumeGame);
             restartFromPauseBtn.addEventListener('click', restartGame);
 
             document.addEventListener('keydown', handleKeyDown);
@@ -346,21 +347,39 @@
             settingsPanel.style.display = 'none';
         }
 
+        // Resume game from pause
+        function resumeGame() {
+            if (!gameState.paused || !gameState.playing) return;
+            
+            // Calculate how long we were paused
+            const pauseDuration = gameState.audioContext.currentTime - gameState.pauseTime;
+            gameState.pauseOffset += pauseDuration;
+            
+            // Create new audio source and start from the correct position
+            gameState.audioSource = gameState.audioContext.createBufferSource();
+            gameState.audioSource.buffer = gameState.audioBuffer;
+            gameState.audioSource.connect(gameState.audioContext.destination);
+            
+            // Calculate the correct playback position
+            const playbackPosition = gameState.audioContext.currentTime - gameState.startTime - gameState.pauseOffset;
+            gameState.audioSource.start(0, playbackPosition);
+            
+            gameState.paused = false;
+            pauseMenu.style.display = 'none';
+        }
+
         // Toggle pause
         function togglePause() {
             if (!gameState.playing) return;
 
             if (gameState.paused) {
-                // Resume game
-                const pauseDuration = gameState.audioContext.currentTime - gameState.pauseTime;
-                gameState.startTime += pauseDuration;
-                gameState.audioSource.start(0, gameState.audioContext.currentTime - gameState.startTime);
-                gameState.paused = false;
-                pauseMenu.style.display = 'none';
+                resumeGame();
             } else {
                 // Pause game
                 gameState.pauseTime = gameState.audioContext.currentTime;
-                gameState.audioSource.stop();
+                if (gameState.audioSource) {
+                    gameState.audioSource.stop();
+                }
                 gameState.paused = true;
                 pauseScore.textContent = Math.floor(gameState.score);
                 pauseCombo.textContent = gameState.combo;
@@ -372,12 +391,41 @@
         function restartGame() {
             if (!gameState.loaded) return;
 
+            // Stop any existing audio
             if (gameState.audioSource) {
                 gameState.audioSource.stop();
+                gameState.audioSource = null;
             }
 
+            // Reset pause state
             gameState.paused = false;
+            gameState.pauseOffset = 0;
             pauseMenu.style.display = 'none';
+
+            // Reset game state
+            gameState.playing = false;
+            gameState.notes = [];
+            gameState.score = 0;
+            gameState.combo = 0;
+            gameState.maxCombo = 0;
+            gameState.judgementCounts = {
+                perfect: 0,
+                great: 0,
+                good: 0,
+                bad: 0,
+                miss: 0
+            };
+            updateJudgementCounts();
+
+            // Reset hit objects
+            if (gameState.hitObjects) {
+                gameState.hitObjects.forEach(obj => {
+                    obj.hit = false;
+                    obj.missed = false;
+                });
+            }
+
+            // Start the game fresh
             startGame();
         }
 
@@ -512,16 +560,19 @@
 
         // Start game
         function startGame() {
-            if (!gameState.loaded || (gameState.playing && !gameState.paused)) return;
+            if (!gameState.loaded) return;
 
             // Stop any existing audio
             if (gameState.audioSource) {
                 gameState.audioSource.stop();
+                gameState.audioSource = null;
             }
 
+            // Reset game state
             gameState.playing = true;
             gameState.paused = false;
             gameState.startTime = gameState.audioContext.currentTime;
+            gameState.pauseOffset = 0;
             gameState.score = 0;
             gameState.combo = 0;
             gameState.maxCombo = 0;
@@ -581,7 +632,7 @@
 
         // Check for hits
         function checkHits(column) {
-            const currentTime = (gameState.audioContext.currentTime - gameState.startTime) * 1000;
+            const currentTime = (gameState.audioContext.currentTime - gameState.startTime - gameState.pauseOffset) * 1000;
 
             let closestHit = null;
             let closestDiff = Infinity;
@@ -651,7 +702,7 @@
                         // Show miss judgement if note was close enough to be visible
                         let noteY;
                         const pixelsPerMillisecond = (gameState.scrollSpeed * gameState.trackLength) / 1000;
-
+                        
                         if (gameState.scrollDirection === 'down') {
                             noteY = gameState.hitPosition - (currentTime - obj.time) * pixelsPerMillisecond;
                         } else {
@@ -692,7 +743,7 @@
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
             if (gameState.playing && !gameState.paused) {
-                const currentTime = (gameState.audioContext.currentTime - gameState.startTime) * 1000;
+                const currentTime = (gameState.audioContext.currentTime - gameState.startTime - gameState.pauseOffset) * 1000;
 
                 // Check for missed notes
                 checkMissedNotes(currentTime);
